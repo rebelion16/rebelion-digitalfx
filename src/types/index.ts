@@ -18,6 +18,8 @@ export interface IndicatorValues {
     macd: number;
     macdSignal: number;
     macdHistogram: number;
+    adx?: number;           // Average Directional Index for trend strength
+    atr?: number;           // Average True Range for volatility
 }
 
 // Price Data Types

@@ -1,4 +1,4 @@
-import { EMA, RSI, MACD } from 'technicalindicators';
+import { EMA, RSI, MACD, ADX, ATR } from 'technicalindicators';
 import config from '../config';
 import { OHLCData, IndicatorValues, CrossoverType } from '../types';
 
@@ -95,6 +95,54 @@ class IndicatorsService {
     }
 
     /**
+     * Calculate ADX (Average Directional Index) for trend strength
+     */
+    calculateADX(data: OHLCData[], period: number = 14): number[] {
+        const highs = data.map(d => d.high);
+        const lows = data.map(d => d.low);
+        const closes = data.map(d => d.close);
+
+        const result = ADX.calculate({
+            high: highs,
+            low: lows,
+            close: closes,
+            period: period,
+        });
+
+        return result.map(r => r.adx);
+    }
+
+    /**
+     * Calculate ATR (Average True Range) for volatility
+     */
+    calculateATR(data: OHLCData[], period: number = 14): number[] {
+        const highs = data.map(d => d.high);
+        const lows = data.map(d => d.low);
+        const closes = data.map(d => d.close);
+
+        return ATR.calculate({
+            high: highs,
+            low: lows,
+            close: closes,
+            period: period,
+        });
+    }
+
+    /**
+     * Check if trend is strong enough (ADX > threshold)
+     */
+    isTrendStrong(adx: number): boolean {
+        return adx >= config.filters.adxMinStrength;
+    }
+
+    /**
+     * Check if MACD histogram is significant
+     */
+    isMACDSignificant(histogram: number): boolean {
+        return Math.abs(histogram) >= config.filters.minMacdHistogram;
+    }
+
+    /**
      * Calculate all indicators from OHLC data
      */
     calculateAllIndicators(data: OHLCData[]): IndicatorValues | null {
@@ -110,12 +158,16 @@ class IndicatorsService {
         const ema21Values = this.calculateEMA(closes, config.indicators.emaSlow);
         const rsiValues = this.calculateRSI(closes);
         const macdValues = this.calculateMACD(closes);
+        const adxValues = this.calculateADX(data);
+        const atrValues = this.calculateATR(data, config.filters.atrPeriod);
 
         // Get latest values
         const ema9 = ema9Values[ema9Values.length - 1];
         const ema21 = ema21Values[ema21Values.length - 1];
         const rsi = rsiValues[rsiValues.length - 1];
         const latestMACD = macdValues[macdValues.length - 1];
+        const adx = adxValues.length > 0 ? adxValues[adxValues.length - 1] : undefined;
+        const atr = atrValues.length > 0 ? atrValues[atrValues.length - 1] : undefined;
 
         if (!ema9 || !ema21 || !rsi || !latestMACD) {
             console.error('Failed to calculate some indicators');
@@ -129,6 +181,8 @@ class IndicatorsService {
             macd: latestMACD.MACD,
             macdSignal: latestMACD.signal,
             macdHistogram: latestMACD.histogram,
+            adx,
+            atr,
         };
     }
 
