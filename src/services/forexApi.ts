@@ -15,30 +15,55 @@ class ForexApiService {
     }
 
     /**
+     * Normalize symbol for Twelve Data API
+     * XAU/USD might need to be sent as "XAU/USD" or "XAUUSD" depending on API
+     */
+    private normalizeSymbol(symbol: string): string {
+        // Remove any spaces and normalize
+        let normalized = symbol.trim().toUpperCase();
+
+        // Ensure forex pairs have the slash format for Twelve Data
+        // Twelve Data expects: XAU/USD, EUR/USD, etc.
+        if (!normalized.includes('/') && normalized.length === 6) {
+            normalized = normalized.substring(0, 3) + '/' + normalized.substring(3);
+        }
+
+        return normalized;
+    }
+
+    /**
      * Get real-time price for a forex pair
      */
     async getRealtimePrice(symbol: string): Promise<PriceData | null> {
         try {
+            const normalizedSymbol = this.normalizeSymbol(symbol);
+
             const response = await this.client.get<TwelveDataQuote>('/quote', {
-                params: { symbol },
+                params: { symbol: normalizedSymbol },
             });
 
             const data = response.data;
 
+            // Check for API error response
+            if ((data as any).status === 'error' || (data as any).code) {
+                console.error(`API Error for ${normalizedSymbol}:`, (data as any).message || 'Unknown error');
+                return null;
+            }
+
             if (!data || !data.close) {
-                console.error(`No data received for ${symbol}`);
+                console.error(`No data received for ${normalizedSymbol}`);
                 return null;
             }
 
             return {
-                symbol: data.symbol,
+                symbol: data.symbol || normalizedSymbol,
                 price: parseFloat(data.close),
                 timestamp: data.datetime,
                 change: parseFloat(data.change || '0'),
                 percentChange: parseFloat(data.percent_change || '0'),
             };
-        } catch (error) {
-            console.error(`Error fetching price for ${symbol}:`, error);
+        } catch (error: any) {
+            console.error(`Error fetching price for ${symbol}:`, error?.message || error);
             return null;
         }
     }
