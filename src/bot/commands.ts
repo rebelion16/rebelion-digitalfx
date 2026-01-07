@@ -824,14 +824,41 @@ ${Array.from(prices.entries())
 }
 
 async function handleStats(bot: TelegramBot, chatId: number, messageId: number | undefined, type: string) {
-    // Simulated stats - in production, load from database
+    // Real stats from tradeHistory
+    const totalSignals = tradeHistory.length;
+    const wins = tradeHistory.filter(t => t.result === 'WIN').length;
+    const losses = tradeHistory.filter(t => t.result === 'LOSS').length;
+
+    const winRate = totalSignals > 0 ? (wins / (wins + losses)) * 100 : 0;
+
+    // Calculate Total P/L
+    const totalProfit = tradeHistory.reduce((acc, t) => acc + (t.profit || 0), 0);
+
+    // Determine Best Pair
+    const pairCounts: { [key: string]: { wins: number, profit: number } } = {};
+    tradeHistory.forEach(t => {
+        if (!pairCounts[t.symbol]) pairCounts[t.symbol] = { wins: 0, profit: 0 };
+        if (t.result === 'WIN') pairCounts[t.symbol].wins++;
+        pairCounts[t.symbol].profit += (t.profit || 0);
+    });
+
+    let bestPair = '-';
+    let maxWins = -1;
+
+    for (const [pair, data] of Object.entries(pairCounts)) {
+        if (data.wins > maxWins) {
+            maxWins = data.wins;
+            bestPair = pair;
+        }
+    }
+
     const stats = {
-        totalSignals: tradeHistory.length || 15,
-        wins: tradeHistory.filter(t => t.result === 'WIN').length || 10,
-        losses: tradeHistory.filter(t => t.result === 'LOSS').length || 5,
-        winRate: 66.7,
-        totalProfit: 125.50,
-        bestPair: 'EUR/USD'
+        totalSignals,
+        wins,
+        losses,
+        winRate,
+        totalProfit,
+        bestPair
     };
 
     let period = 'Hari Ini';

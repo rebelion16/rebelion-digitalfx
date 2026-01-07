@@ -55,15 +55,15 @@ input int      InpTrailingStepPips    = 10;       // Trailing Step (pips)
 //| INPUT PARAMETERS - SL/TP SETTINGS                                 |
 //+------------------------------------------------------------------+
 input group "=== STOP LOSS & TAKE PROFIT ==="
-input double   InpStopLossPercent    = 0.8;       // Stop Loss % (forex biasa)
-input double   InpTakeProfitPercent  = 1.6;       // Take Profit % (forex biasa)
+input double   InpStopLossPercent    = 0.5;       // Stop Loss % (Reduced for consistency)
+input double   InpTakeProfitPercent  = 1.0;       // Take Profit % (Reduced for consistency)
 input double   InpRiskRewardRatio    = 2.0;       // Risk:Reward Ratio (untuk auto TP)
 
 input group "=== XAU/USD SPECIAL SETTINGS ==="
 input bool     InpUseGoldSettings    = true;      // Gunakan setting khusus Gold
-input int      InpGoldSLPips         = 70;        // Gold Stop Loss (pips)
-input int      InpGoldTPPips         = 150;       // Gold Take Profit (pips)
-input int      InpGoldMinADX         = 25;        // Gold Minimum ADX
+input int      InpGoldSLPips         = 50;        // Gold Stop Loss (pips)
+input int      InpGoldTPPips         = 100;       // Gold Take Profit (pips)
+input int      InpGoldMinADX         = 20;        // Gold Minimum ADX
 
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS - EMA SETTINGS                                   |
@@ -78,8 +78,8 @@ input int      InpEMASlow         = 21;           // EMA Slow Period
 input group "=== RSI SETTINGS ==="
 input int      InpRSIPeriod       = 14;           // RSI Period
 input int      InpRSIBuyMin       = 35;           // RSI Buy Zone Min
-input int      InpRSIBuyMax       = 65;           // RSI Buy Zone Max
-input int      InpRSISellMin      = 35;           // RSI Sell Zone Min
+input int      InpRSIBuyMax       = 75;           // RSI Buy Zone Max
+input int      InpRSISellMin      = 25;           // RSI Sell Zone Min
 input int      InpRSISellMax      = 65;           // RSI Sell Zone Max
 
 //+------------------------------------------------------------------+
@@ -96,13 +96,13 @@ input double   InpMACDMinHist     = 0.00005;      // MACD Min Histogram
 //+------------------------------------------------------------------+
 input group "=== ADX SETTINGS ==="
 input int      InpADXPeriod       = 14;           // ADX Period
-input int      InpADXMinStrength  = 20;           // ADX Minimum Strength
+input int      InpADXMinStrength  = 15;           // ADX Minimum Strength
 
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS - BOLLINGER BANDS                                |
 //+------------------------------------------------------------------+
 input group "=== BOLLINGER BANDS SETTINGS ==="
-input bool     InpUseBollinger    = true;         // Use Bollinger Bands Filter
+input bool     InpUseBollinger    = false;        // Use Bollinger Bands Filter
 input int      InpBBPeriod        = 20;           // Bollinger Period
 input double   InpBBDeviation     = 2.0;          // Bollinger Deviation
 input ENUM_APPLIED_PRICE InpBBPrice = PRICE_CLOSE; // Bollinger Applied Price
@@ -111,7 +111,7 @@ input ENUM_APPLIED_PRICE InpBBPrice = PRICE_CLOSE; // Bollinger Applied Price
 //| INPUT PARAMETERS - STOCHASTIC                                     |
 //+------------------------------------------------------------------+
 input group "=== STOCHASTIC SETTINGS ==="
-input bool     InpUseStochastic   = true;         // Use Stochastic Filter
+input bool     InpUseStochastic   = false;        // Use Stochastic Filter
 input int      InpStochK          = 14;           // %K Period
 input int      InpStochD          = 3;            // %D Period
 input int      InpStochSlowing    = 3;            // Slowing
