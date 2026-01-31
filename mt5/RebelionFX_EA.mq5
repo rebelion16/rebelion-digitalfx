@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                           RebelionFX_EA_Pro.mq5 |
-//|                        Copyright 2026, Rebelion Digital FX      |
-//|     Auto Trading EA - Multi-Indicator + Risk + Telegram         |
+//|                         RebelionFX_EA_Pro.mq5                    |
+//|                  Copyright 2026, Rebelion Digital FX             |
+//|        Auto Trading EA - Multi-Indicator + Risk + Telegram       |
 //+------------------------------------------------------------------+
-#property copyright "Copyright 2026, Rebelion Digital FX"
+#property copyright "Copyright 2026, Rebelion Digital FX by Lukmandian11"
 #property link      "https://github.com/rebelion16"
-#property version   "3.00"
+#property version   "3.11"
 #property description "EA berbasis EMA + RSI + MACD + ADX + Bollinger + Stochastic"
-#property description "Dengan Advanced Risk Management + Telegram Notifikasi"
+#property description "Dengan Advanced Risk Management + Multi-Account Telegram"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -21,21 +21,22 @@ input group "=== TELEGRAM NOTIFICATIONS ==="
 input bool     InpUseTelegram      = true;        // Enable Telegram Notifications
 input string   InpTelegramToken    = "";          // Telegram Bot Token
 input string   InpTelegramChatID   = "";          // Telegram Chat ID
+input string   InpAccountLabel     = "Akun-1";    // Account Label
 input bool     InpNotifyOnOpen     = true;        // Notify on Trade Open
 input bool     InpNotifyOnClose    = true;        // Notify on Trade Close
 input bool     InpNotifyDailySummary = true;      // Send Daily Summary
-input int      InpSummaryHour      = 22;          // Daily Summary Hour (server time)
+input int      InpSummaryHour      = 13;          // Daily Summary Hour UTC (20:00 WIB = 13:00 UTC)
 
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS - TRADING SETTINGS                               |
 //+------------------------------------------------------------------+
 input group "=== TRADING SETTINGS ==="
 input double   InpLotSize          = 0.01;        // Lot Size (0 = Auto Risk)
-input bool     InpUseAutoLot       = true;        // Use Auto Lot (Risk-Based)
+input bool     InpUseAutoLot       = false;       // Use Auto Lot (Risk-Based) - OFF untuk fixed lot
 input int      InpMagicNumber      = 123456;      // Magic Number
 input string   InpTradeComment     = "RebelionFX"; // Trade Comment
-input int      InpMaxTradesPerDay  = 3;           // Max Trades per Day
-input int      InpMaxOpenTrades    = 1;           // Max Open Trades per Symbol
+input int      InpMaxTradesPerDay  = 10;          // Max Trades per Day
+input int      InpMaxOpenTrades    = 2;           // Max Open Trades per Symbol
 
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS - RISK MANAGEMENT                                |
@@ -44,6 +45,8 @@ input group "=== RISK MANAGEMENT (BEST PRACTICE) ==="
 input double   InpRiskPercent       = 1.0;        // Risk % per Trade (1-2% recommended)
 input double   InpMaxDailyLossPercent = 5.0;      // Max Daily Loss % (stop trading)
 input double   InpMaxDrawdownPercent  = 10.0;     // Max Drawdown % (emergency stop)
+input double   InpDailyProfitTarget   = 2.0;      // Daily Profit Target $ (0 = disabled)
+input bool     InpStopOnProfitTarget  = true;     // Stop Trading if Profit Target reached
 input double   InpMaxSpreadPoints     = 20;       // Max Spread (points) to trade
 input bool     InpUseBreakEven        = true;     // Use Break Even
 input int      InpBreakEvenPips       = 20;       // Break Even Trigger (pips)
@@ -64,6 +67,7 @@ input bool     InpUseGoldSettings    = true;      // Gunakan setting khusus Gold
 input int      InpGoldSLPips         = 50;        // Gold Stop Loss (pips)
 input int      InpGoldTPPips         = 100;       // Gold Take Profit (pips)
 input int      InpGoldMinADX         = 20;        // Gold Minimum ADX
+input int      InpGoldMaxSpread      = 100;       // Gold Max Spread (points)
 
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS - EMA SETTINGS                                   |
@@ -146,8 +150,14 @@ double stochKBuffer[], stochDBuffer[];
 double startingBalance, dailyStartBalance;
 int dailyTradesCount, totalWins, totalLosses, dailyWins, dailyLosses;
 double totalProfit, totalLoss, dailyProfit;
+double dailyRealizedProfit = 0;   // Profit terealisasi hari ini per symbol
+bool dailyProfitTargetReached = false;
 datetime lastTradeDate;
 bool dailySummarySent;
+datetime lastDiagnosticTime;
+datetime lastSummaryCheck;
+ulong lastKnownTickets[];     // Track open positions for close detection
+int lastPositionCount = 0;    // Last known position count
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                    |
@@ -194,10 +204,19 @@ int OnInit()
     ArraySetAsSeries(stochKBuffer, true);
     ArraySetAsSeries(stochDBuffer, true);
     
-    Print("🚀 RebelionFX EA v3.00 Started on ", _Symbol);
+    // Initialize ticket tracking
+    UpdateKnownTickets();
+    
+    Print("🚀 RebelionFX EA v3.10 Started on ", _Symbol, " [", InpAccountLabel, "]");
     
     if(InpUseTelegram && InpTelegramToken != "" && InpTelegramChatID != "")
-        SendTelegram("🚀 RebelionFX EA Started\nSymbol: " + _Symbol + "\nBalance: $" + DoubleToString(startingBalance,2));
+    {
+        string msg = "🚀 RebelionFX EA Started\n";
+        msg += "🏷️ Akun: " + InpAccountLabel + "\n";
+        msg += "📊 Symbol: " + _Symbol + "\n";
+        msg += "💰 Balance: $" + DoubleToString(startingBalance,2);
+        SendTelegram(msg);
+    }
     
     return INIT_SUCCEEDED;
 }
@@ -224,19 +243,72 @@ void OnTick()
 {
     UpdateDailyTracking();
     ManagePositions();
+    CheckClosedTrades();    // Check for closed trades (TP/SL)
+    CheckDailySummary();    // Check if time to send daily summary
     
     if(!IsNewBar()) return;
-    if(IsMaxDailyLossReached() || IsMaxDrawdownReached()) return;
-    if(dailyTradesCount >= InpMaxTradesPerDay) return;
-    if(!IsSpreadOK()) return;
-    if(InpUseTimeFilter && !IsTimeOK()) return;
-    if(InpAvoidFriday && IsFridayEvening()) return;
-    if(CountTrades() >= InpMaxOpenTrades) return;
-    if(!GetIndicators()) return;
+    
+    // Diagnostic logging setiap new bar
+    PrintDiagnostics();
+    
+    if(IsMaxDailyLossReached() || IsMaxDrawdownReached()) 
+    {
+        Print("⛔ Trading stopped: Max daily loss or drawdown reached");
+        return;
+    }
+    if(dailyTradesCount >= InpMaxTradesPerDay) 
+    {
+        Print("⛔ Max trades per day reached: ", dailyTradesCount, "/", InpMaxTradesPerDay);
+        return;
+    }
+    if(IsDailyProfitTargetReached())
+    {
+        Print("🎯 Daily profit target reached: $", DoubleToString(dailyRealizedProfit, 2), " >= $", DoubleToString(InpDailyProfitTarget, 2));
+        return;
+    }
+    if(!IsSpreadOK()) 
+    {
+        long currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+        int maxSpread = (IsGold() && InpUseGoldSettings) ? InpGoldMaxSpread : (int)InpMaxSpreadPoints;
+        Print("⚠️ Spread too high: ", currentSpread, " > ", maxSpread, " (max)");
+        return;
+    }
+    if(InpUseTimeFilter && !IsTimeOK()) 
+    {
+        Print("⏰ Outside trading hours");
+        return;
+    }
+    if(InpAvoidFriday && IsFridayEvening()) 
+    {
+        Print("📅 Friday evening - trading paused");
+        return;
+    }
+    if(CountTrades() >= InpMaxOpenTrades) 
+    {
+        Print("📊 Max open trades reached: ", CountTrades(), "/", InpMaxOpenTrades);
+        return;
+    }
+    if(!GetIndicators()) 
+    {
+        Print("❌ Failed to get indicator values");
+        return;
+    }
     
     int signal = GetSignal();
-    if(signal == 1) { if(OpenBuy()) dailyTradesCount++; }
-    else if(signal == -1) { if(OpenSell()) dailyTradesCount++; }
+    if(signal == 1) 
+    { 
+        Print("🟢 BUY SIGNAL detected! Opening position...");
+        if(OpenBuy()) dailyTradesCount++; 
+    }
+    else if(signal == -1) 
+    { 
+        Print("🔴 SELL SIGNAL detected! Opening position...");
+        if(OpenSell()) dailyTradesCount++; 
+    }
+    else
+    {
+        Print("⏳ No signal - waiting for conditions");
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -253,6 +325,8 @@ void UpdateDailyTracking()
         dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
         dailyTradesCount = dailyWins = dailyLosses = 0;
         dailyProfit = 0;
+        dailyRealizedProfit = 0;        // Reset profit harian
+        dailyProfitTargetReached = false; // Reset flag profit target
         dailySummarySent = false;
     }
 }
@@ -277,9 +351,43 @@ bool IsMaxDrawdownReached()
     return dd >= InpMaxDrawdownPercent;
 }
 
+bool IsDailyProfitTargetReached()
+{
+    // Jika fitur disabled atau target = 0, return false
+    if(!InpStopOnProfitTarget || InpDailyProfitTarget <= 0) return false;
+    
+    // Cek apakah sudah tercapai sebelumnya (untuk efisiensi)
+    if(dailyProfitTargetReached) return true;
+    
+    // Cek profit terealisasi hari ini
+    if(dailyRealizedProfit >= InpDailyProfitTarget)
+    {
+        dailyProfitTargetReached = true;
+        
+        // Kirim notifikasi Telegram
+        if(InpUseTelegram)
+        {
+            string msg = "🎯 PROFIT TARGET REACHED!\n";
+            msg += "━━━━━━━━━━━━━━━━━━\n";
+            msg += "🏷️ Akun: " + InpAccountLabel + "\n";
+            msg += "📊 Symbol: " + _Symbol + "\n";
+            msg += "💰 Profit Hari Ini: $" + DoubleToString(dailyRealizedProfit, 2) + "\n";
+            msg += "🎯 Target: $" + DoubleToString(InpDailyProfitTarget, 2) + "\n";
+            msg += "━━━━━━━━━━━━━━━━━━\n";
+            msg += "⏸️ Trading STOPPED untuk hari ini\n";
+            msg += "📅 Resume: Besok otomatis";
+            SendTelegram(msg);
+        }
+        return true;
+    }
+    return false;
+}
+
 bool IsSpreadOK()
 {
-    return SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) <= InpMaxSpreadPoints;
+    long currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+    int maxSpread = (IsGold() && InpUseGoldSettings) ? InpGoldMaxSpread : (int)InpMaxSpreadPoints;
+    return currentSpread <= maxSpread;
 }
 
 bool IsTimeOK()
@@ -412,6 +520,81 @@ int GetSignal()
     return 0;
 }
 
+//+------------------------------------------------------------------+
+//| Print Diagnostics - untuk debugging                              |
+//+------------------------------------------------------------------+
+void PrintDiagnostics()
+{
+    // Print diagnostics setiap 5 menit untuk menghindari spam log
+    if(TimeCurrent() - lastDiagnosticTime < 300) return;
+    lastDiagnosticTime = TimeCurrent();
+    
+    if(!GetIndicators()) 
+    {
+        Print("❌ Cannot get indicators for diagnostics");
+        return;
+    }
+    
+    double ema9 = emaFastBuffer[1], ema21 = emaSlowBuffer[1];
+    double rsi = rsiBuffer[1];
+    double macdHist = macdMainBuffer[1] - macdSignalBuffer[1];
+    double adx = adxBuffer[1], adxPlus = adxPlusBuffer[1], adxMinus = adxMinusBuffer[1];
+    long currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+    int maxSpread = (IsGold() && InpUseGoldSettings) ? InpGoldMaxSpread : (int)InpMaxSpreadPoints;
+    int minADX = (IsGold() && InpUseGoldSettings) ? InpGoldMinADX : InpADXMinStrength;
+    
+    Print("═══════════════════════════════════════════════════");
+    Print("📊 DIAGNOSTIC REPORT - ", _Symbol, " @ ", TimeToString(TimeCurrent()));
+    Print("═══════════════════════════════════════════════════");
+    Print("📈 EMA9: ", DoubleToString(ema9, 2), " | EMA21: ", DoubleToString(ema21, 2), 
+          " | Trend: ", (ema9 > ema21 ? "BULLISH ↑" : "BEARISH ↓"));
+    Print("📉 RSI: ", DoubleToString(rsi, 1), 
+          " | Buy Zone: ", InpRSIBuyMin, "-", InpRSIBuyMax,
+          " | Sell Zone: ", InpRSISellMin, "-", InpRSISellMax);
+    Print("📊 MACD Hist: ", DoubleToString(macdHist, 6), 
+          " | Min Required: ", DoubleToString(InpMACDMinHist, 6),
+          " | ", (MathAbs(macdHist) >= InpMACDMinHist ? "✅ OK" : "❌ TOO WEAK"));
+    Print("💪 ADX: ", DoubleToString(adx, 1), " | Min: ", minADX,
+          " | ", (adx >= minADX ? "✅ OK" : "❌ TOO WEAK"));
+    Print("📊 +DI: ", DoubleToString(adxPlus, 1), " | -DI: ", DoubleToString(adxMinus, 1),
+          " | ", (adxPlus > adxMinus ? "BUY bias" : "SELL bias"));
+    Print("💱 Spread: ", currentSpread, " | Max: ", maxSpread,
+          " | ", (currentSpread <= maxSpread ? "✅ OK" : "❌ TOO HIGH"));
+    Print("📅 Daily Trades: ", dailyTradesCount, "/", InpMaxTradesPerDay);
+    Print("📂 Open Positions: ", CountTrades(), "/", InpMaxOpenTrades);
+    
+    // Signal analysis
+    bool buyEMA = ema9 > ema21;
+    bool buyADX = adxPlus > adxMinus;
+    bool buyRSI = rsi >= InpRSIBuyMin && rsi <= InpRSIBuyMax;
+    bool buyMACD = macdHist > 0;
+    bool adxOK = adx >= minADX;
+    bool macdStrong = MathAbs(macdHist) >= InpMACDMinHist;
+    
+    Print("───────────────────────────────────────────────────");
+    Print("🔵 BUY CONDITIONS:");
+    Print("   EMA9 > EMA21: ", (buyEMA ? "✅" : "❌"));
+    Print("   +DI > -DI: ", (buyADX ? "✅" : "❌"));
+    Print("   RSI in Buy Zone: ", (buyRSI ? "✅" : "❌"), " (RSI=", DoubleToString(rsi,1), ")");
+    Print("   MACD > 0: ", (buyMACD ? "✅" : "❌"));
+    Print("   ADX Strong: ", (adxOK ? "✅" : "❌"));
+    Print("   MACD Strong: ", (macdStrong ? "✅" : "❌"));
+    
+    bool sellEMA = ema9 < ema21;
+    bool sellADX = adxMinus > adxPlus;
+    bool sellRSI = rsi >= InpRSISellMin && rsi <= InpRSISellMax;
+    bool sellMACD = macdHist < 0;
+    
+    Print("🔴 SELL CONDITIONS:");
+    Print("   EMA9 < EMA21: ", (sellEMA ? "✅" : "❌"));
+    Print("   -DI > +DI: ", (sellADX ? "✅" : "❌"));
+    Print("   RSI in Sell Zone: ", (sellRSI ? "✅" : "❌"), " (RSI=", DoubleToString(rsi,1), ")");
+    Print("   MACD < 0: ", (sellMACD ? "✅" : "❌"));
+    Print("   ADX Strong: ", (adxOK ? "✅" : "❌"));
+    Print("   MACD Strong: ", (macdStrong ? "✅" : "❌"));
+    Print("═══════════════════════════════════════════════════");
+}
+
 bool IsGold() { return StringFind(_Symbol, "XAU") >= 0 || StringFind(_Symbol, "GOLD") >= 0; }
 
 double CalcLot(double slDist)
@@ -431,9 +614,11 @@ void CalcSLTP(bool isBuy, double price, double &sl, double &tp)
 {
     if(IsGold() && InpUseGoldSettings)
     {
-        double pip = 0.01;
+        // Gold pip = 0.10 (10 points), contoh: 50 pips = $5.00, 100 pips = $10.00
+        double pip = 0.10;
         if(isBuy) { sl = price - InpGoldSLPips*pip; tp = price + InpGoldTPPips*pip; }
         else { sl = price + InpGoldSLPips*pip; tp = price - InpGoldTPPips*pip; }
+        Print("📍 Gold SL/TP: Entry=", DoubleToString(price,2), " SL=", DoubleToString(sl,2), " TP=", DoubleToString(tp,2));
     }
     else
     {
@@ -455,7 +640,16 @@ bool OpenBuy()
     {
         Print("✅ BUY ", lot, " @ ", price);
         if(InpUseTelegram && InpNotifyOnOpen)
-            SendTelegram("📈 BUY " + _Symbol + "\nLot: " + DoubleToString(lot,2) + "\nEntry: " + DoubleToString(price,_Digits));
+        {
+            string msg = "📈 BUY " + _Symbol + "\n";
+            msg += "🏷️ Akun: " + InpAccountLabel + "\n";
+            msg += "📊 Lot: " + DoubleToString(lot,2) + "\n";
+            msg += "💰 Entry: " + DoubleToString(price,_Digits) + "\n";
+            msg += "🛑 SL: " + DoubleToString(sl,_Digits) + "\n";
+            msg += "🎯 TP: " + DoubleToString(tp,_Digits);
+            SendTelegram(msg);
+        }
+        UpdateKnownTickets();  // Update tracking
         return true;
     }
     return false;
@@ -471,10 +665,222 @@ bool OpenSell()
     {
         Print("✅ SELL ", lot, " @ ", price);
         if(InpUseTelegram && InpNotifyOnOpen)
-            SendTelegram("📉 SELL " + _Symbol + "\nLot: " + DoubleToString(lot,2) + "\nEntry: " + DoubleToString(price,_Digits));
+        {
+            string msg = "📉 SELL " + _Symbol + "\n";
+            msg += "🏷️ Akun: " + InpAccountLabel + "\n";
+            msg += "📊 Lot: " + DoubleToString(lot,2) + "\n";
+            msg += "💰 Entry: " + DoubleToString(price,_Digits) + "\n";
+            msg += "🛑 SL: " + DoubleToString(sl,_Digits) + "\n";
+            msg += "🎯 TP: " + DoubleToString(tp,_Digits);
+            SendTelegram(msg);
+        }
+        UpdateKnownTickets();  // Update tracking
         return true;
     }
     return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check for Closed Trades and Send Notification                     |
+//+------------------------------------------------------------------+
+void CheckClosedTrades()
+{
+    if(!InpUseTelegram || !InpNotifyOnClose) return;
+    
+    // Get current open positions for this EA
+    int currentCount = 0;
+    ulong currentTickets[];
+    
+    for(int i = PositionsTotal()-1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(!PositionSelectByTicket(ticket)) continue;
+        if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+        
+        ArrayResize(currentTickets, currentCount + 1);
+        currentTickets[currentCount] = ticket;
+        currentCount++;
+    }
+    
+    // Check if any known ticket is missing (closed)
+    for(int i = 0; i < ArraySize(lastKnownTickets); i++)
+    {
+        ulong checkTicket = lastKnownTickets[i];
+        bool found = false;
+        
+        for(int j = 0; j < currentCount; j++)
+        {
+            if(currentTickets[j] == checkTicket)
+            {
+                found = true;
+                break;
+            }
+        }
+        
+        if(!found)
+        {
+            // Ticket is closed - find it in history
+            NotifyClosedTrade(checkTicket);
+        }
+    }
+    
+    // Update known tickets
+    ArrayResize(lastKnownTickets, currentCount);
+    for(int i = 0; i < currentCount; i++)
+        lastKnownTickets[i] = currentTickets[i];
+    lastPositionCount = currentCount;
+}
+
+//+------------------------------------------------------------------+
+//| Notify about Closed Trade from History                            |
+//+------------------------------------------------------------------+
+void NotifyClosedTrade(ulong ticket)
+{
+    // Select deal from history
+    datetime fromTime = TimeCurrent() - 86400; // Last 24 hours
+    datetime toTime = TimeCurrent() + 3600;
+    
+    if(!HistorySelect(fromTime, toTime)) return;
+    
+    int totalDeals = HistoryDealsTotal();
+    for(int i = totalDeals - 1; i >= 0; i--)
+    {
+        ulong dealTicket = HistoryDealGetTicket(i);
+        if(dealTicket == 0) continue;
+        
+        ulong positionId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+        long magic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
+        string symbol = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+        ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+        
+        if(magic != InpMagicNumber || symbol != _Symbol) continue;
+        if(entry != DEAL_ENTRY_OUT) continue;
+        
+        double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+        double volume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+        double closePrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+        ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+        
+        // Update statistics
+        if(profit > 0)
+        {
+            totalWins++;
+            dailyWins++;
+            totalProfit += profit;
+            dailyProfit += profit;
+        }
+        else
+        {
+            totalLosses++;
+            dailyLosses++;
+            totalLoss += MathAbs(profit);
+            dailyProfit += profit;
+        }
+        
+        // Update daily realized profit for profit target tracking
+        dailyRealizedProfit += profit;
+        
+        // Determine if TP or SL hit
+        string closeReason = profit > 0 ? "🎯 TP HIT" : "� SL HIT";
+        string emoji = profit > 0 ? "✅" : "❌";
+        string profitStr = profit >= 0 ? "+$" + DoubleToString(profit, 2) : "-$" + DoubleToString(MathAbs(profit), 2);
+        
+        string msg = emoji + " TRADE CLOSED\n";
+        msg += "🏷️ Akun: " + InpAccountLabel + "\n";
+        msg += "📊 " + _Symbol + "\n";
+        msg += "📈 Type: " + (dealType == DEAL_TYPE_BUY ? "SELL→Close" : "BUY→Close") + "\n";
+        msg += "📊 Lot: " + DoubleToString(volume, 2) + "\n";
+        msg += "💰 Close: " + DoubleToString(closePrice, _Digits) + "\n";
+        msg += closeReason + "\n";
+        msg += "💵 P/L: " + profitStr + "\n";
+        msg += "💰 Balance: $" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2);
+        
+        SendTelegram(msg);
+        Print(emoji, " Trade closed: ", profitStr);
+        break;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if time to send Daily Summary                               |
+//+------------------------------------------------------------------+
+void CheckDailySummary()
+{
+    if(!InpUseTelegram || !InpNotifyDailySummary) return;
+    
+    MqlDateTime dt;
+    TimeToStruct(TimeGMT(), dt);  // Use GMT time
+    
+    // Check every minute to avoid missing the hour
+    if(TimeCurrent() - lastSummaryCheck < 60) return;
+    lastSummaryCheck = TimeCurrent();
+    
+    // Check if current hour matches summary hour (GMT) and summary not yet sent today
+    if(dt.hour == InpSummaryHour && !dailySummarySent)
+    {
+        SendDailySummary();
+        dailySummarySent = true;
+        Print("📊 Daily summary sent at ", dt.hour, ":00 UTC");
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Send Daily Summary to Telegram                                    |
+//+------------------------------------------------------------------+
+void SendDailySummary()
+{
+    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double dailyPL = currentBalance - dailyStartBalance;
+    double dailyPLPercent = dailyStartBalance > 0 ? (dailyPL / dailyStartBalance * 100) : 0;
+    
+    int totalDailyTrades = dailyWins + dailyLosses;
+    double winRate = totalDailyTrades > 0 ? ((double)dailyWins / totalDailyTrades * 100) : 0;
+    
+    string emoji = dailyPL >= 0 ? "📈" : "📉";
+    string plStr = dailyPL >= 0 ? "+$" + DoubleToString(dailyPL, 2) : "-$" + DoubleToString(MathAbs(dailyPL), 2);
+    string plPctStr = dailyPL >= 0 ? "+" + DoubleToString(dailyPLPercent, 2) + "%" : DoubleToString(dailyPLPercent, 2) + "%";
+    
+    string msg = "📊 DAILY SUMMARY\n";
+    msg += "━━━━━━━━━━━━━━━━━━\n";
+    msg += "🏷️ Akun: " + InpAccountLabel + "\n";
+    msg += "📈 Symbol: " + _Symbol + "\n";
+    msg += "📅 Tanggal: " + TimeToString(TimeCurrent(), TIME_DATE) + "\n";
+    msg += "━━━━━━━━━━━━━━━━━━\n";
+    msg += emoji + " P/L Hari Ini: " + plStr + " (" + plPctStr + ")\n";
+    msg += "🎯 Win: " + IntegerToString(dailyWins) + " | Loss: " + IntegerToString(dailyLosses) + "\n";
+    msg += "📊 Total Trades: " + IntegerToString(totalDailyTrades) + "\n";
+    msg += "🏆 Win Rate: " + DoubleToString(winRate, 1) + "%\n";
+    msg += "━━━━━━━━━━━━━━━━━━\n";
+    msg += "💰 Balance: $" + DoubleToString(currentBalance, 2) + "\n";
+    msg += "📊 Equity: $" + DoubleToString(currentEquity, 2) + "\n";
+    msg += "━━━━━━━━━━━━━━━━━━\n";
+    msg += "⏰ Next Summary: Tomorrow 20:00 WIB";
+    
+    SendTelegram(msg);
+}
+
+//+------------------------------------------------------------------+
+//| Update Known Tickets Array                                        |
+//+------------------------------------------------------------------+
+void UpdateKnownTickets()
+{
+    int count = 0;
+    ArrayResize(lastKnownTickets, 0);
+    
+    for(int i = PositionsTotal()-1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(!PositionSelectByTicket(ticket)) continue;
+        if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+        
+        ArrayResize(lastKnownTickets, count + 1);
+        lastKnownTickets[count] = ticket;
+        count++;
+    }
+    lastPositionCount = count;
 }
 
 bool SendTelegram(string msg)
@@ -483,8 +889,10 @@ bool SendTelegram(string msg)
     string url = "https://api.telegram.org/bot" + InpTelegramToken + "/sendMessage";
     string post = "chat_id=" + InpTelegramChatID + "&text=" + msg;
     char data[], result[];
-    string headers = "Content-Type: application/x-www-form-urlencoded\r\n";
-    StringToCharArray(post, data);
+    string headers = "Content-Type: application/x-www-form-urlencoded; charset=utf-8\r\n";
+    // Use CP_UTF8 (65001) for proper emoji encoding
+    int len = StringToCharArray(post, data, 0, WHOLE_ARRAY, CP_UTF8);
+    ArrayResize(data, len - 1); // Remove null terminator
     string resHeaders;
     int res = WebRequest("POST", url, headers, 5000, data, result, resHeaders);
     return res != -1;
