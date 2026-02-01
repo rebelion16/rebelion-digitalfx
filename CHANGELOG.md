@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [Scalping 1.00] - 2026-02-01
+### Added
+- **RebelionFX_Scalping.mq5** - EA Scalping baru untuk timeframe M5:
+  - Timeframe: M5 (5 menit) untuk scalping cepat
+  - SL/TP: 10/15 pips (Gold: 15/25 pips)
+  - Max Spread: 15 points (lebih ketat)
+  - Break Even: 5 pips, Trailing Stop: 8 pips
+  - Max Trades/Day: 30 (lebih banyak untuk scalping)
+  - Risk: 0.5% per trade, Max Daily Loss: 3%
+  - Indicator: EMA 5/13, RSI 7, MACD 8/17/9, Stochastic 5/3/3
+  - Semua fitur Telegram dari EA Swing (notifikasi, daily summary, multi-account)
+  - Daily Profit Target: $5 default
+  - Magic Number berbeda: 789012 (untuk multi-EA)
+
 ## [3.11] - 2026-01-30
 ### Added
 - **Daily Profit Target (RebelionFX_EA.mq5)**:
