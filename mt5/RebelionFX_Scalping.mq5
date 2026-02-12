@@ -430,8 +430,8 @@ bool GetIndicators()
     if(CopyBuffer(handleEMAFast, 0, 0, 3, emaFastBuffer) < 3) return false;
     if(CopyBuffer(handleEMASlow, 0, 0, 3, emaSlowBuffer) < 3) return false;
     if(CopyBuffer(handleRSI, 0, 0, 2, rsiBuffer) < 2) return false;
-    if(CopyBuffer(handleMACD, 0, 0, 2, macdMainBuffer) < 2) return false;
-    if(CopyBuffer(handleMACD, 1, 0, 2, macdSignalBuffer) < 2) return false;
+    if(CopyBuffer(handleMACD, 0, 0, 3, macdMainBuffer) < 3) return false;
+    if(CopyBuffer(handleMACD, 1, 0, 3, macdSignalBuffer) < 3) return false;
     if(InpUseStochastic)
     {
         if(CopyBuffer(handleStochastic, 0, 0, 3, stochKBuffer) < 3) return false;
